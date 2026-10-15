@@ -1,12 +1,12 @@
 
 import re
-import sys
 from pathlib import Path
-from urllib.parse import quote_plus
-import xml.etree.ElementTree as ET
 
 import pandas as pd
 import requests
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+import xml.etree.ElementTree as ET
 
 
 NEWS_RSS_URL = "https://news.google.com/rss/search"
@@ -30,7 +30,6 @@ def get_google_news_result(term, count):
             headers={"User-Agent": "GoogleNewsScraper/1.0"},
         )
         response.raise_for_status()
-
         root = ET.fromstring(response.content)
 
     except requests.RequestException as exc:
@@ -65,6 +64,55 @@ def create_output_filename(term):
     return f"{safe_term[:80]}_news_scrapper.xlsx"
 
 
+def save_articles_to_excel(articles, output_file):
+    """Save articles in a formatted Excel workbook."""
+    df = pd.DataFrame(articles, columns=["title", "link"])
+    df.columns = ["Title", "Article Link"]
+
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="News Articles")
+
+        worksheet = writer.sheets["News Articles"]
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+        header_fill = PatternFill(
+            fill_type="solid",
+            fgColor="1F4E78",
+        )
+
+        for cell in worksheet[1]:
+            cell.font = Font(
+                bold=True,
+                color="FFFFFF",
+                size=12,
+            )
+            cell.fill = header_fill
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+            )
+
+        worksheet.row_dimensions[1].height = 25
+        worksheet.column_dimensions["A"].width = 65
+        worksheet.column_dimensions["B"].width = 55
+
+        for row in range(2, worksheet.max_row + 1):
+            title_cell = worksheet.cell(row=row, column=1)
+            link_cell = worksheet.cell(row=row, column=2)
+
+            title_cell.alignment = Alignment(
+                vertical="top",
+                wrap_text=True,
+            )
+
+            link_cell.hyperlink = link_cell.value
+            link_cell.style = "Hyperlink"
+            link_cell.alignment = Alignment(vertical="top")
+
+            worksheet.row_dimensions[row].height = 30
+
+
 def main():
     term = input("Enter the news title keyword: ").strip()
 
@@ -74,9 +122,11 @@ def main():
 
     try:
         count = int(input("Enter the number of articles: ").strip())
+
         if count < 1:
             print("Article count must be at least 1.")
             return
+
     except ValueError:
         print("Please enter a valid whole number.")
         return
@@ -92,8 +142,7 @@ def main():
     output_file = create_output_filename(term)
 
     try:
-        df = pd.DataFrame(articles, columns=["title", "link"])
-        df.to_excel(output_file, index=False)
+        save_articles_to_excel(articles, output_file)
 
     except (OSError, PermissionError, ValueError) as exc:
         print(f"Could not save the Excel file: {exc}")
