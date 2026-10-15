@@ -1,12 +1,12 @@
 
 import re
 from pathlib import Path
+from urllib.parse import urlparse
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 import requests
 from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
-import xml.etree.ElementTree as ET
 
 
 NEWS_RSS_URL = "https://news.google.com/rss/search"
@@ -14,7 +14,7 @@ REQUEST_TIMEOUT = 15
 
 
 def get_google_news_result(term, count):
-    """Fetch article titles and links from Google News RSS."""
+    """Fetch news titles, links, sources, and publication dates."""
     params = {
         "q": term,
         "hl": "en-IN",
@@ -46,9 +46,28 @@ def get_google_news_result(term, count):
     for item in root.findall("./channel/item"):
         title = item.findtext("title", default="").strip()
         link = item.findtext("link", default="").strip()
+        published = item.findtext("pubDate", default="").strip()
+
+        # Google News commonly includes the source in <source>.
+        source_element = item.find("source")
+        source = (
+            source_element.text.strip()
+            if source_element is not None and source_element.text
+            else ""
+        )
+
+        if not source and link:
+            source = urlparse(link).netloc.removeprefix("www.")
 
         if title and link and link not in seen_links:
-            articles.append({"title": title, "link": link})
+            articles.append(
+                {
+                    "title": title,
+                    "source": source or "Unknown",
+                    "published_date": published or "Not available",
+                    "link": link,
+                }
+            )
             seen_links.add(link)
 
         if len(articles) >= count:
@@ -65,9 +84,18 @@ def create_output_filename(term):
 
 
 def save_articles_to_excel(articles, output_file):
-    """Save articles in a formatted Excel workbook."""
-    df = pd.DataFrame(articles, columns=["title", "link"])
-    df.columns = ["Title", "Article Link"]
+    """Save news articles in a formatted Excel workbook."""
+    df = pd.DataFrame(
+        articles,
+        columns=["title", "source", "published_date", "link"],
+    )
+
+    df.columns = [
+        "Title",
+        "News Source",
+        "Publication Date",
+        "Article Link",
+    ]
 
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="News Articles")
@@ -82,11 +110,7 @@ def save_articles_to_excel(articles, output_file):
         )
 
         for cell in worksheet[1]:
-            cell.font = Font(
-                bold=True,
-                color="FFFFFF",
-                size=12,
-            )
+            cell.font = Font(bold=True, color="FFFFFF", size=12)
             cell.fill = header_fill
             cell.alignment = Alignment(
                 horizontal="center",
@@ -94,21 +118,31 @@ def save_articles_to_excel(articles, output_file):
             )
 
         worksheet.row_dimensions[1].height = 25
-        worksheet.column_dimensions["A"].width = 65
-        worksheet.column_dimensions["B"].width = 55
+
+        column_widths = {
+            "A": 60,
+            "B": 28,
+            "C": 35,
+            "D": 55,
+        }
+
+        for column, width in column_widths.items():
+            worksheet.column_dimensions[column].width = width
 
         for row in range(2, worksheet.max_row + 1):
-            title_cell = worksheet.cell(row=row, column=1)
-            link_cell = worksheet.cell(row=row, column=2)
-
-            title_cell.alignment = Alignment(
+            worksheet.cell(row=row, column=1).alignment = Alignment(
                 vertical="top",
                 wrap_text=True,
             )
 
+            for column in (2, 3):
+                worksheet.cell(row=row, column=column).alignment = (
+                    Alignment(vertical="top", wrap_text=True)
+                )
+
+            link_cell = worksheet.cell(row=row, column=4)
             link_cell.hyperlink = link_cell.value
             link_cell.style = "Hyperlink"
-            link_cell.alignment = Alignment(vertical="top")
 
             worksheet.row_dimensions[row].height = 30
 
