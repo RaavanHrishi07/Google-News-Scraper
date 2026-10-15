@@ -2,6 +2,7 @@
 import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import pandas as pd
@@ -56,7 +57,6 @@ def get_google_news_result(term, count):
         )
 
         if not source and link:
-            from urllib.parse import urlparse
             source = urlparse(link).netloc.removeprefix("www.")
 
         if title and link and link not in seen_links:
@@ -76,11 +76,11 @@ def get_google_news_result(term, count):
     return articles
 
 
-def create_output_filename(term):
-    """Create a filesystem-safe Excel filename."""
+def create_output_filename(term, extension):
+    """Create a filesystem-safe output filename."""
     safe_term = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", term)
     safe_term = safe_term.strip(" ._") or "news"
-    return f"{safe_term[:80]}_news_scrapper.xlsx"
+    return f"{safe_term[:80]}_news_scrapper.{extension}"
 
 
 def style_header(worksheet):
@@ -202,26 +202,41 @@ def main():
         print("No articles found, or the news feed could not be retrieved.")
         return
 
-    output_file = create_output_filename(term)
     generated_at = datetime.now().astimezone().strftime(
         "%Y-%m-%d %H:%M:%S %Z"
     )
 
+    excel_file = create_output_filename(term, "xlsx")
+    csv_file = create_output_filename(term, "csv")
+
     try:
         save_articles_to_excel(
             articles,
-            output_file,
+            excel_file,
             term,
             generated_at,
         )
 
+        csv_df = pd.DataFrame(
+            articles,
+            columns=["title", "source", "published_date", "link"],
+        )
+        csv_df.columns = [
+            "Title",
+            "News Source",
+            "Publication Date",
+            "Article Link",
+        ]
+        csv_df.to_csv(csv_file, index=False, encoding="utf-8-sig")
+
     except (OSError, PermissionError, ValueError) as exc:
-        print(f"Could not save the Excel file: {exc}")
+        print(f"Could not save the report: {exc}")
         return
 
     print(f"\nSuccessfully saved {len(articles)} articles.")
     print(f"Report generated at: {generated_at}")
-    print(f"Excel file: {Path(output_file).resolve()}")
+    print(f"Excel file: {Path(excel_file).resolve()}")
+    print(f"CSV file: {Path(csv_file).resolve()}")
 
 
 if __name__ == "__main__":
