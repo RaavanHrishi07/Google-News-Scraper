@@ -1,7 +1,7 @@
 
 import re
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import pandas as pd
@@ -48,7 +48,6 @@ def get_google_news_result(term, count):
         link = item.findtext("link", default="").strip()
         published = item.findtext("pubDate", default="").strip()
 
-        # Google News commonly includes the source in <source>.
         source_element = item.find("source")
         source = (
             source_element.text.strip()
@@ -57,6 +56,7 @@ def get_google_news_result(term, count):
         )
 
         if not source and link:
+            from urllib.parse import urlparse
             source = urlparse(link).netloc.removeprefix("www.")
 
         if title and link and link not in seen_links:
@@ -83,41 +83,69 @@ def create_output_filename(term):
     return f"{safe_term[:80]}_news_scrapper.xlsx"
 
 
-def save_articles_to_excel(articles, output_file):
-    """Save news articles in a formatted Excel workbook."""
-    df = pd.DataFrame(
+def style_header(worksheet):
+    """Apply consistent formatting to a worksheet header."""
+    header_fill = PatternFill(
+        fill_type="solid",
+        fgColor="1F4E78",
+    )
+
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF", size=12)
+        cell.fill = header_fill
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+        )
+
+    worksheet.row_dimensions[1].height = 25
+
+
+def save_articles_to_excel(articles, output_file, keyword, generated_at):
+    """Save a summary sheet and a formatted news articles sheet."""
+    article_df = pd.DataFrame(
         articles,
         columns=["title", "source", "published_date", "link"],
     )
 
-    df.columns = [
+    article_df.columns = [
         "Title",
         "News Source",
         "Publication Date",
         "Article Link",
     ]
 
+    summary_df = pd.DataFrame(
+        [
+            {"Field": "Search Keyword", "Value": keyword},
+            {"Field": "Total Articles", "Value": len(articles)},
+            {"Field": "Report Generated At", "Value": generated_at},
+        ]
+    )
+
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="News Articles")
-
-        worksheet = writer.sheets["News Articles"]
-        worksheet.freeze_panes = "A2"
-        worksheet.auto_filter.ref = worksheet.dimensions
-
-        header_fill = PatternFill(
-            fill_type="solid",
-            fgColor="1F4E78",
+        summary_df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Summary",
+        )
+        article_df.to_excel(
+            writer,
+            index=False,
+            sheet_name="News Articles",
         )
 
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True, color="FFFFFF", size=12)
-            cell.fill = header_fill
-            cell.alignment = Alignment(
-                horizontal="center",
-                vertical="center",
-            )
+        summary_ws = writer.sheets["Summary"]
+        summary_ws.freeze_panes = "A2"
+        summary_ws.auto_filter.ref = summary_ws.dimensions
+        summary_ws.column_dimensions["A"].width = 25
+        summary_ws.column_dimensions["B"].width = 40
+        style_header(summary_ws)
 
-        worksheet.row_dimensions[1].height = 25
+        articles_ws = writer.sheets["News Articles"]
+        articles_ws.freeze_panes = "A2"
+        articles_ws.auto_filter.ref = articles_ws.dimensions
+        style_header(articles_ws)
 
         column_widths = {
             "A": 60,
@@ -127,24 +155,25 @@ def save_articles_to_excel(articles, output_file):
         }
 
         for column, width in column_widths.items():
-            worksheet.column_dimensions[column].width = width
+            articles_ws.column_dimensions[column].width = width
 
-        for row in range(2, worksheet.max_row + 1):
-            worksheet.cell(row=row, column=1).alignment = Alignment(
+        for row in range(2, articles_ws.max_row + 1):
+            articles_ws.cell(row=row, column=1).alignment = Alignment(
                 vertical="top",
                 wrap_text=True,
             )
 
             for column in (2, 3):
-                worksheet.cell(row=row, column=column).alignment = (
+                articles_ws.cell(row=row, column=column).alignment = (
                     Alignment(vertical="top", wrap_text=True)
                 )
 
-            link_cell = worksheet.cell(row=row, column=4)
+            link_cell = articles_ws.cell(row=row, column=4)
             link_cell.hyperlink = link_cell.value
             link_cell.style = "Hyperlink"
+            link_cell.alignment = Alignment(vertical="top")
 
-            worksheet.row_dimensions[row].height = 30
+            articles_ws.row_dimensions[row].height = 30
 
 
 def main():
@@ -174,15 +203,24 @@ def main():
         return
 
     output_file = create_output_filename(term)
+    generated_at = datetime.now().astimezone().strftime(
+        "%Y-%m-%d %H:%M:%S %Z"
+    )
 
     try:
-        save_articles_to_excel(articles, output_file)
+        save_articles_to_excel(
+            articles,
+            output_file,
+            term,
+            generated_at,
+        )
 
     except (OSError, PermissionError, ValueError) as exc:
         print(f"Could not save the Excel file: {exc}")
         return
 
     print(f"\nSuccessfully saved {len(articles)} articles.")
+    print(f"Report generated at: {generated_at}")
     print(f"Excel file: {Path(output_file).resolve()}")
 
 
